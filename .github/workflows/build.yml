@@ -1,44 +1,33 @@
-name: iOS Build & Release
+name: iOS Build (Fixed)
 
 on:
   push:
-    tags:
-      - 'v*'  # 通过 v 开头的标签触发（如 v1.0.0）
-  workflow_dispatch:  # 允许手动触发
+    tags: ['v*']
+  workflow_dispatch:
 
 jobs:
   build-ios:
     runs-on: macos-latest
-    timeout-minutes: 30
-
     steps:
-      # ------ 1. 检出代码 ------
-      - name: Checkout Code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0  # 获取完整提交历史
+      - uses: actions/checkout@v3
 
-      # ------ 2. 安装 Flutter ------
       - name: Setup Flutter
         run: |
-          git clone https://github.com/flutter/flutter.git -b stable --depth 1 ~/flutter
+          git clone https://github.com/flutter/flutter.git -b stable ~/flutter
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          export PATH="$PATH:$HOME/flutter/bin"
           flutter doctor -v
 
-      # ------ 3. 修复 iOS 最低版本 ------
-      - name: Fix iOS Deployment
+      - name: Fix iOS Config
         run: |
-          # 强制设置 iOS 11.0 最低版本
-          echo "platform :ios, '11.0'" > ios/Podfile
-          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [^;]*;/IPHONEOS_DEPLOYMENT_TARGET = 11.0;/g' ios/Runner.xcodeproj/project.pbxproj
-          plutil -replace MinimumOSVersion -string "11.0" ios/Runner/Info.plist
+          flutter create --platforms ios .
+          sed -i '' "1i \\
+          platform :ios, '11.0'
+          " ios/Podfile
+          echo "workspace 'Runner'" >> ios/Podfile
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = .*/IPHONEOS_DEPLOYMENT_TARGET = 11.0;/' ios/Runner.xcodeproj/project.pbxproj
 
-      # ------ 4. 安装 CocoaPods ------
       - name: Install CocoaPods
-        run: |
-          sudo gem install cocoapods -v 1.11.3
-          pod setup
+        run: sudo gem install cocoapods -v 1.11.3 && pod setup
 
       - name: Install Pods
         run: |
@@ -46,15 +35,10 @@ jobs:
           pod install --repo-update
           cd ..
 
-      # ------ 5. 构建 IPA ------
       - name: Build IPA
-        run: |
-          flutter pub get
-          flutter build ipa --release --no-codesign
-          ls -la build/ios/ipa/
+        run: flutter build ipa --release --no-codesign
 
-      # ------ 6. 上传到 Release ------
-      - name: Upload Release
+      - name: Upload Artifact
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
