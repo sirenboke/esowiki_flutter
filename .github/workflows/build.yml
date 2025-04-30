@@ -1,7 +1,6 @@
-name: Build iOS IPA
+name: Flutter iOS Build
 
-on:
-  workflow_dispatch:  # 允许手动触发
+on: [workflow_dispatch]
 
 jobs:
   build:
@@ -9,16 +8,17 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install Flutter
+      - name: Install Flutter (Fixed)
         run: |
-          git clone https://github.com/flutter/flutter.git -b stable --depth 1 ~/flutter
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 $HOME/flutter
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          flutter doctor -v
+          export PATH="$PATH:$HOME/flutter/bin"
+          flutter precache
 
-      - name: Install CocoaPods
+      - name: Verify Path
         run: |
-          sudo gem install cocoapods
-          pod setup
+          echo "Flutter路径: $(which flutter)"
+          flutter doctor -v
 
       - name: Build IPA
         run: |
@@ -27,8 +27,3 @@ jobs:
           pod install
           cd ..
           flutter build ipa --release --no-codesign
-
-      - name: Upload IPA
-        uses: softprops/action-gh-release@v1
-        with:
-          files: build/ios/ipa/*.ipa
