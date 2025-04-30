@@ -9,37 +9,84 @@ jobs:
   build-ios:
     runs-on: macos-latest
     steps:
+      # ------ 1. 强制清除环境残留 ------
+      - name: Clean Environment
+        run: |
+          rm -rf ~/flutter || true
+          rm -rf ~/.pub-cache || true
+
+      # ------ 2. 检出代码 ------
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # 必须获取完整提交历史
 
-      - name: Setup Flutter
+      # ------ 3. 三重保险安装Flutter ------
+      - name: Install Flutter (Full)
         run: |
-          git clone https://github.com/flutter/flutter.git -b stable ~/flutter
+          # 方式1：完整克隆稳定版
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 ~/flutter
+          
+          # 方式2：官方安装脚本（备用）
+          # curl -L https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_3.13.9-stable.zip -o flutter.zip
+          # unzip flutter.zip -d ~
+          
+          # 设置三重路径保障
+          echo "FLUTTER_ROOT=~/flutter" >> $GITHUB_ENV
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          flutter doctor -v
+          export PATH="$PATH:$HOME/flutter/bin"
+          
+          # 验证安装
+          ~/flutter/bin/flutter doctor -v
+          which flutter
+          flutter --version
 
-      - name: Fix iOS Config
+      # ------ 4. 强制初始化iOS工程 ------
+      - name: Recreate iOS Project
         run: |
-          flutter create --platforms ios .
+          rm -rf ios
+          flutter create --platforms ios --org com.example .
+          
+          # 检查关键文件
+          ls -la ios/Runner.xcodeproj
+          [ -f ios/Podfile ] || exit 1
+
+      # ------ 5. 修复部署目标 ------
+      - name: Fix Deployment Target
+        run: |
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = .*/IPHONEOS_DEPLOYMENT_TARGET = 11.0;/g' ios/Runner.xcodeproj/project.pbxproj
+          plutil -replace MinimumOSVersion -string "11.0" ios/Runner/Info.plist
           sed -i '' "1i \\
-          platform :ios, '11.0'
+          platform :ios, '11.0'\\
+          workspace 'Runner'\\
           " ios/Podfile
-          echo "workspace 'Runner'" >> ios/Podfile
-          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = .*/IPHONEOS_DEPLOYMENT_TARGET = 11.0;/' ios/Runner.xcodeproj/project.pbxproj
 
-      - name: Install CocoaPods
-        run: sudo gem install cocoapods -v 1.11.3 && pod setup
+      # ------ 6. 安装CocoaPods ------
+      - name: Install CocoaPods (Strict)
+        run: |
+          sudo gem uninstall cocoapods -a -x || true
+          sudo gem install cocoapods -v 1.11.3 --conservative
+          pod setup --verbose
+          pod --version
 
-      - name: Install Pods
+      # ------ 7. 安装依赖 ------
+      - name: Install Dependencies
         run: |
           cd ios
-          pod install --repo-update
+          pod install --repo-update --verbose
           cd ..
 
+      # ------ 8. 构建验证 ------
       - name: Build IPA
-        run: flutter build ipa --release --no-codesign
+        run: |
+          flutter pub get
+          flutter build ipa --release --no-codesign --verbose
+          ls -lAh build/ios/ipa/
 
+      # ------ 9. 上传产物 ------
       - name: Upload Artifact
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: build/ios/ipa/*.ipa
+          files: |
+            build/ios/ipa/*.ipa
+            ios/Runner.xcodeproj/project.pbxproj
