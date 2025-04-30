@@ -1,36 +1,39 @@
+name: Build Unsigned iOS IPA
+
 on:
   release:
     types: [published]
 
-
 jobs:
   build:
-    name: build(linux, android)
-    runs-on: ubuntu-latest
+    name: Build IPA (Unsigned)
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v3.1.0
-      - name: install flutter
+      - uses: actions/checkout@v3
+
+      - name: Install Flutter
         run: |
-          sudo snap install flutter --classic
-          
-      - name: install deps
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 ~/flutter
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
+          flutter doctor -v
+
+      - name: Install CocoaPods
+        run: |
+          sudo gem install cocoapods
+          pod setup
+
+      - name: Build IPA (No Codesign)
         run: |
           flutter pub get
-          chmod +x ./gen.sh
-          ./gen.sh
-          
-      # - name: build linux
-      #  run: |
-      #    flutter build linux --release
-          
-      - name: build apk
-        run: |
-          flutter build apk --release
-          
-      - name: Release
+          cd ios
+          pod install
+          cd ..
+          flutter build ipa --release --no-codesign
+
+      - name: Upload IPA to Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: |
+          files: build/ios/ipa/*.ipa
             build/app/outputs/flutter-apk/app-release.apk
             # build/app/outputs/linux/
