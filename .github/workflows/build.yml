@@ -1,37 +1,80 @@
-name: Flutter iOS Build
+name: iOS Build & Release
 
-on: [workflow_dispatch]
+on:
+  push:
+    tags:
+      - 'v*'  # 通过标签推送触发（例如 v1.0.0）
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
-  build:
-    runs-on: macos-latest
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-latest  # 必须使用 macOS 环境
+    timeout-minutes: 30    # 避免因依赖问题卡死
+
     steps:
-      - uses: actions/checkout@v3
+      # ----------- 1. 检出代码 -----------
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # 获取完整提交历史（某些 Flutter 插件需要）
 
-      - name: Set Up Flutter
+      # ----------- 2. 设置 Flutter 环境 -----------
+      - name: Setup Flutter
         run: |
-          git clone https://github.com/flutter/flutter.git -b stable --depth 1 $HOME/flutter
+          # 安装 Flutter (跳过缓存以解决版本冲突)
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 ~/flutter
+          echo "FLUTTER_HOME=~/flutter" >> $GITHUB_ENV
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
+          export PATH="$PATH:$HOME/flutter/bin"
+          
+          # 验证环境
           flutter doctor -v
+          which flutter
 
-      - name: Update iOS Deployment Target
+      # ----------- 3. 修复 iOS 部署目标冲突 -----------
+      - name: Fix iOS Deployment Target
         run: |
-          # 更新 Podfile
+          # 强制设置 Podfile 最低版本为 11.0
           echo "platform :ios, '11.0'" > ios/Podfile
-          cat ios/Podfile
+          
+          # 更新 Xcode 项目配置
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [^;]*;/IPHONEOS_DEPLOYMENT_TARGET = 11.0;/g' ios/Runner.xcodeproj/project.pbxproj
+          
+          # 更新 Info.plist
+          plutil -replace MinimumOSVersion -string "11.0" ios/Runner/Info.plist
 
-          # 更新 Xcode 项目设置
-          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = .*/IPHONEOS_DEPLOYMENT_TARGET = 11.0;/" ios/Runner.xcodeproj/project.pbxproj
+      # ----------- 4. 安装 iOS 依赖 -----------
+      - name: Install CocoaPods
+        run: |
+          sudo gem install cocoapods -v 1.11.3  # 固定版本避免兼容问题
+          pod setup
 
-      - name: Install Pods
+      - name: Install Pod Dependencies
         run: |
           cd ios
-          pod repo update
-          pod install --repo-update
+          pod install --repo-update  # 强制更新仓库
           cd ..
 
-      - name: Build IPA
+      # ----------- 5. 构建无签名 IPA -----------
+      - name: Build Unsigned IPA
         run: |
+          flutter pub get
+          flutter build ipa --release --no-codesign --dart-define=CI_ENV=true
+          
+          # 验证产物存在
+          ls -la build/ios/ipa/*.ipa
+
+      # ----------- 6. 发布到 GitHub Release -----------
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            build/ios/ipa/*.ipa
+            build/ios/archive/*.xcarchive.zip  # 可选：包含调试符号
+          draft: false
+          prerelease: false
           flutter pub get
           flutter build ipa --release --no-codesign
           flutter pub get
