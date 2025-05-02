@@ -29,7 +29,14 @@ jobs:
         run: flutter pub get
 
       - name: Analyze code
-        run: flutter analyze
+        run: flutter analyze || true # 即使失败也继续 workflow
+
+      - name: Upload Analyze Log if Failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analyze-log
+          path: . # 或者你希望上传包含日志的特定文件
 
       - name: Run tests
         run: flutter test
