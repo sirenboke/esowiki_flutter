@@ -1,46 +1,49 @@
-name: Build iOS for Simulator
+name: Auto Build IPA
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+on: [workflow_dispatch]
+
 jobs:
-  build:
+  build-ipa:
     runs-on: macos-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Get Flutter SDK Version
-        id: flutter_version
-        run: |
-          flutter_version=$(grep "sdk: \">= " pubspec.yaml | cut -d'>=' -f2 | cut -d'<' -f1 | tr -d ' ')
-          echo "FLUTTER_VERSION=$flutter_version" >> $GITHUB_ENV
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
 
-      - name: Set up Flutter
-        uses: flutter-actions/setup-flutter@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+    - name: Setup Xcode Automatic Signing
+      env:
+        APPLE_ID: ${{ secrets.APPLE_ID }}  # 你的普通 Apple ID
+        APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      run: |
+        sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer
+        security delete-keychain ios-build.keychain || true
+        security create-keychain -p "" ios-build.keychain
+        security unlock-keychain -p "" ios-build.keychain
+        security set-keychain-settings -lut 3600 ios-build.keychain
 
-      - name: Get dependencies
-        run: flutter pub get
+        xcodebuild -project ios/Runner.xcodeproj \
+          -allowProvisioningUpdates \
+          -destination 'generic/platform=iOS' \
+          -authenticationKeyAppleID "$APPLE_ID" \
+          -authenticationKeyPassword "$APPLE_PASSWORD" \
+          -authenticationKeyTeamID "" \
+          DEVELOPMENT_TEAM="" \
+          CODE_SIGN_STYLE="Automatic" \
+          clean archive -archivePath build/Runner
 
-      - name: Run code generation
-        run: flutter pub run build_runner build --delete-conflicting-outputs
+        xcodebuild -exportArchive \
+          -archivePath build/Runner.xcarchive \
+          -exportPath build/ipa \
+          -exportOptionsPlist ios/exportOptions.plist
 
-      - name: Analyze code
-        run: flutter analyze
-
-      - name: Run tests
-        run: flutter test
-
-      - name: Build iOS for Simulator (Debug)
-        run: flutter build ios --simulator --debug
-
-      - name: Upload App Directory (Unsigned Debug)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-app-unsigned-debug
-          path: build/ios/iphoneos
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: unsigned-ipa
+        path: build/ipa/*.ipa
