@@ -1,92 +1,44 @@
-name: iOS Build (Fixed)
+name: Build iOS for Simulator
 
 on:
   push:
-    tags: ['v*']
-  workflow_dispatch:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build-ios:
+  build:
     runs-on: macos-latest
+
     steps:
-      # ------ 1. 强制清除环境残留 ------
-      - name: Clean Environment
-        run: |
-          rm -rf ~/flutter || true
-          rm -rf ~/.pub-cache || true
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # ------ 2. 检出代码 ------
-      - uses: actions/checkout@v3
+      - name: Get Flutter SDK Version
+        id: flutter_version
+        run: |
+          flutter_version=$(grep "sdk: \">= " pubspec.yaml | cut -d'>=' -f2 | cut -d'<' -f1 | tr -d ' ')
+          echo "FLUTTER_VERSION=$flutter_version" >> $GITHUB_ENV
+
+      - name: Set up Flutter
+        uses: flutter-actions/setup-flutter@v2
         with:
-          fetch-depth: 0  # 必须获取完整提交历史
+          flutter-version: ${{ env.FLUTTER_VERSION }}
 
-      # ------ 3. 三重保险安装Flutter ------
-      - name: Install Flutter (Full)
-        run: |
-          # 方式1：完整克隆稳定版
-          git clone https://github.com/flutter/flutter.git -b stable --depth 1 ~/flutter
-          
-          # 方式2：官方安装脚本（备用）
-          # curl -L https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_3.13.9-stable.zip -o flutter.zip
-          # unzip flutter.zip -d ~
-          
-          # 设置三重路径保障
-          echo "FLUTTER_ROOT=~/flutter" >> $GITHUB_ENV
-          echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          export PATH="$PATH:$HOME/flutter/bin"
-          
-          # 验证安装
-          ~/flutter/bin/flutter doctor -v
-          which flutter
-          flutter --version
+      - name: Get dependencies
+        run: flutter pub get
 
-      # ------ 4. 强制初始化iOS工程 ------
-      - name: Recreate iOS Project
-        run: |
-          rm -rf ios
-          flutter create --platforms ios --org com.example .
-          
-          # 检查关键文件
-          ls -la ios/Runner.xcodeproj
-          [ -f ios/Podfile ] || exit 1
+      - name: Analyze code
+        run: flutter analyze
 
-      # ------ 5. 修复部署目标 ------
-      - name: Fix Deployment Target
-        run: |
-          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = .*/IPHONEOS_DEPLOYMENT_TARGET = 11.0;/g' ios/Runner.xcodeproj/project.pbxproj
-          plutil -replace MinimumOSVersion -string "11.0" ios/Runner/Info.plist
-          sed -i '' "1i \\
-          platform :ios, '11.0'\\
-          workspace 'Runner'\\
-          " ios/Podfile
+      - name: Run tests
+        run: flutter test
 
-      # ------ 6. 安装CocoaPods ------
-      - name: Install CocoaPods (Strict)
-        run: |
-          sudo gem uninstall cocoapods -a -x || true
-          sudo gem install cocoapods -v 1.11.3 --conservative
-          pod setup --verbose
-          pod --version
+      - name: Build iOS for Simulator (Debug)
+        run: flutter build ios --simulator --debug
 
-      # ------ 7. 安装依赖 ------
-      - name: Install Dependencies
-        run: |
-          cd ios
-          pod install --repo-update --verbose
-          cd ..
-
-      # ------ 8. 构建验证 ------
-      - name: Build IPA
-        run: |
-          flutter pub get
-          flutter build ipa --release --no-codesign --verbose
-          ls -lAh build/ios/ipa/
-
-      # ------ 9. 上传产物 ------
-      - name: Upload Artifact
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload App Directory (Unsigned Debug)
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            build/ios/ipa/*.ipa
-            ios/Runner.xcodeproj/project.pbxproj
+          name: ios-app-unsigned-debug
+          path: build/ios/iphoneos
