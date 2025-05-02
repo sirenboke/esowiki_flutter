@@ -11,17 +11,37 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup Flutter
+    - name: Get Flutter SDK Version
+      id: flutter_version
+      run: |
+        flutter_version=$(grep "sdk: \">= " pubspec.yaml | cut -d'>=' -f2 | cut -d'<' -f1 | tr -d ' ')
+        echo "FLUTTER_VERSION=$flutter_version" >> $GITHUB_ENV
+
+    - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
         channel: stable
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+
+    - name: Select Xcode
+      run: |
+        # 尝试使用环境变量选择 Xcode 版本 (如果设置了)
+        if [[ -n "${XCODE_VERSION_MAJOR}" ]]; then
+          echo "Selecting Xcode ${XCODE_VERSION_MAJOR}.x from environment variable XCODE_VERSION_MAJOR"
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION_MAJOR}.x.app/Contents/Developer"
+        else
+          # 否则，选择最新的 Xcode
+          echo "Selecting latest Xcode"
+          LATEST_XCODE=$(ls -td /Applications/Xcode*.app | head -1)
+          sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+        fi
+        echo "Xcode path selected: $(xcode-select -p)"
 
     - name: Setup Xcode Automatic Signing
       env:
         APPLE_ID: ${{ secrets.APPLE_ID }}  # 你的普通 Apple ID
         APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
       run: |
-        sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer
         security delete-keychain ios-build.keychain || true
         security create-keychain -p "" ios-build.keychain
         security unlock-keychain -p "" ios-build.keychain
@@ -47,3 +67,4 @@ jobs:
       with:
         name: unsigned-ipa
         path: build/ipa/*.ipa
+
